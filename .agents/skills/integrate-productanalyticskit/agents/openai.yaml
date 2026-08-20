@@ -1,0 +1,4 @@
+interface:
+  display_name: "Integrate ProductAnalyticsKit"
+  short_description: "Adopt the studio product analytics baseline"
+  default_prompt: "Use $integrate-productanalyticskit to add privacy-safe product analytics and migrate existing telemetry without identity leaks."
