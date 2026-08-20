@@ -226,13 +226,20 @@ and makes migration evidence misleading.
 ## Verify behavior
 
 Use an injected fake or host wrapper test; do not send test events to production.
-Prove:
+Package tests own start idempotency, token immutability, anonymous/identified
+identity transitions, opt-out suppression, reset ordering, and transport
+serialization. Do not replay those fixed state-machine cases in each app.
 
-- startup is called once and a second call cannot switch project tokens;
+Host tests prove only:
+
 - event names and properties are stable and contain no raw user content;
-- anonymous events precede identify, identified events follow it, and logout
-  reset prevents identity inheritance;
 - an existing opt-out survives migration and produces no events;
-- re-enabling after an opted-out logout resets before identifying the next user;
+- account/session truth maps to identify and logout at the app's composition root;
 - App Store privacy declarations match the implemented event catalog;
-- production source has no direct PostHog or second analytics implementation.
+- every host business action maps to the intended event and property vocabulary.
+
+Do not inspect `project.pbxproj`, imports, SDK names, or source strings from
+XCTest. ProductAnalyticsKit's playbook lint owns dependency, production assembly,
+and residual direct-SDK checks. Use a fake sink and public APIs; if two apps need
+the same event-mapping helper, move the stable semantic abstraction and tests into
+the Kit instead of creating a generic analytics TestSupport product.
