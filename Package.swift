@@ -28,7 +28,10 @@ let package = Package(
         ),
         .testTarget(
             name: "ProductAnalyticsKitTests",
-            dependencies: ["ProductAnalyticsKit"]
+            dependencies: [
+                "ProductAnalyticsKit",
+                .product(name: "PostHog", package: "posthog-ios"),
+            ]
         ),
     ],
     swiftLanguageModes: [.v6]

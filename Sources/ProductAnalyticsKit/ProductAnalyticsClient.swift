@@ -7,10 +7,12 @@ public final class ProductAnalyticsClient {
     private let transport: any ProductAnalyticsTransport
     private let preferences: any ProductAnalyticsPreferenceStoring
     private let lifecycleSource: any ProductAnalyticsLifecycleSourcing
-    private let runtimeProperties: @MainActor () -> [String: AnalyticsPropertyValue]
+    private let runtimeProperties: @MainActor () -> [String: Any]
 
     private var projectToken: String?
-    private var pendingUserID: String?
+    private var reportedUserID: UUID?
+    private var hasReportedIdentity = false
+    private var identifiedUserID: UUID?
 
     public var isCollectionEnabled: Bool {
         preferences.collectionEnabled
@@ -30,12 +32,25 @@ public final class ProductAnalyticsClient {
         transport: any ProductAnalyticsTransport,
         preferences: any ProductAnalyticsPreferenceStoring,
         lifecycleSource: any ProductAnalyticsLifecycleSourcing,
-        runtimeProperties: @escaping @MainActor () -> [String: AnalyticsPropertyValue]
+        runtimeProperties: @escaping @MainActor () -> [String: Any]
     ) {
         self.transport = transport
         self.preferences = preferences
         self.lifecycleSource = lifecycleSource
         self.runtimeProperties = runtimeProperties
+    }
+
+    /// Seeds a legacy user choice exactly once, before analytics starts.
+    /// No host-owned migration marker is needed.
+    @discardableResult
+    public func seedCollectionPreferenceIfUnset(legacyValue: Bool) -> Bool {
+        guard projectToken == nil,
+              !preferences.isCollectionPreferenceInitialized
+        else {
+            return false
+        }
+        preferences.collectionEnabled = legacyValue
+        return true
     }
 
     @discardableResult
@@ -58,18 +73,8 @@ public final class ProductAnalyticsClient {
         )
         self.projectToken = token
 
-        if preferences.hasPendingIdentityReset {
-            transport.setCollectionEnabled(true)
-            transport.reset()
-            preferences.hasPendingIdentityReset = false
-            if !preferences.collectionEnabled {
-                transport.setCollectionEnabled(false)
-            }
-        }
-
-        if preferences.collectionEnabled, let pendingUserID {
-            transport.identify(userID: pendingUserID)
-        }
+        reconcilePendingIdentityResetIfNeeded()
+        identifyReportedUserIfNeeded()
 
         lifecycleSource.eventHandler = { [weak self] event in
             self?.record(event)
@@ -79,47 +84,63 @@ public final class ProductAnalyticsClient {
         return .started
     }
 
+    /// Captures a bounded product event without ever throwing into business code.
     @discardableResult
-    public func track(_ event: AnalyticsEvent) -> AnalyticsCaptureOutcome {
+    public func track(
+        name: String,
+        properties: [String: AnalyticsPropertyValue] = [:]
+    ) -> AnalyticsCaptureOutcome {
         guard projectToken != nil else { return .dropped(.notStarted) }
         guard preferences.collectionEnabled else {
             return .dropped(.collectionDisabled)
         }
+        guard (try? AnalyticsValidation.validateEventName(
+            name,
+            allowsStudioPrefix: false
+        )) != nil,
+        (try? AnalyticsValidation.validateProperties(properties)) != nil
+        else {
+            return .dropped(.invalidSchema)
+        }
+
         transport.capture(
-            event: event.name,
-            properties: event.properties.mapValues(\.transportValue)
+            event: name,
+            properties: properties.mapValues(\.transportValue)
         )
         return .captured
     }
 
+    /// Applies the current authenticated session identity. Passing a different
+    /// UUID resets the previous identity before identifying the new account;
+    /// passing nil performs logout reset.
     @discardableResult
-    public func identify(userID rawUserID: String) -> AnalyticsIdentityOutcome {
-        do {
-            try AnalyticsValidation.validateUserID(rawUserID)
-        } catch {
-            return .rejected
+    public func setAuthenticatedUserID(
+        _ userID: UUID?
+    ) -> AnalyticsIdentityOutcome {
+        hasReportedIdentity = true
+        reportedUserID = userID
+
+        let previousUserID = preferences.authenticatedUserID
+        let changed = previousUserID != userID
+        preferences.authenticatedUserID = userID
+        if changed, previousUserID != nil {
+            preferences.hasPendingIdentityReset = true
         }
 
-        pendingUserID = rawUserID
         guard projectToken != nil, preferences.collectionEnabled else {
-            return .deferred
+            return changed || identifiedUserID != userID ? .deferred : .unchanged
         }
-        transport.identify(userID: rawUserID)
-        return .identified
-    }
 
-    public func reset() {
-        pendingUserID = nil
-        guard projectToken != nil else {
-            preferences.hasPendingIdentityReset = true
-            return
+        let resetApplied = reconcilePendingIdentityResetIfNeeded()
+        if let userID, identifiedUserID != userID {
+            transport.identify(userID: userID.uuidString)
+            identifiedUserID = userID
+            return .applied
         }
-        guard preferences.collectionEnabled else {
-            preferences.hasPendingIdentityReset = true
-            return
+        if userID == nil {
+            identifiedUserID = nil
         }
-        transport.reset()
-        preferences.hasPendingIdentityReset = false
+        return resetApplied ? .applied : .unchanged
     }
 
     public func setCollectionEnabled(_ enabled: Bool) {
@@ -130,13 +151,43 @@ public final class ProductAnalyticsClient {
         transport.setCollectionEnabled(enabled)
         guard enabled else { return }
 
-        if preferences.hasPendingIdentityReset {
-            transport.reset()
-            preferences.hasPendingIdentityReset = false
+        reconcilePendingIdentityResetIfNeeded()
+        identifyReportedUserIfNeeded()
+    }
+
+    @discardableResult
+    private func reconcilePendingIdentityResetIfNeeded() -> Bool {
+        guard preferences.hasPendingIdentityReset,
+              projectToken != nil
+        else {
+            return false
         }
-        if let pendingUserID {
-            transport.identify(userID: pendingUserID)
+
+        // Startup deliberately remains opted out while a persisted identity
+        // reset is pending. Temporarily opt in so transports such as PostHog do
+        // not discard the reset operation, then restore the user's preference.
+        let shouldRestoreDisabled = !preferences.collectionEnabled
+        transport.setCollectionEnabled(true)
+        transport.reset()
+        identifiedUserID = nil
+        preferences.hasPendingIdentityReset = false
+        if shouldRestoreDisabled {
+            transport.setCollectionEnabled(false)
         }
+        return true
+    }
+
+    private func identifyReportedUserIfNeeded() {
+        guard hasReportedIdentity,
+              preferences.collectionEnabled,
+              projectToken != nil,
+              let reportedUserID,
+              identifiedUserID != reportedUserID
+        else {
+            return
+        }
+        transport.identify(userID: reportedUserID.uuidString)
+        identifiedUserID = reportedUserID
     }
 
     private func record(_ event: ProductAnalyticsLifecycleEvent) {
@@ -145,24 +196,28 @@ public final class ProductAnalyticsClient {
             captureStudioEvent("studio_app_became_active")
         case .enteredBackground:
             captureStudioEvent("studio_app_entered_background")
-            if preferences.collectionEnabled, projectToken != nil {
-                transport.flush()
-            }
+            flushIfEnabled()
+        case .becameInactive:
+            captureStudioEvent("studio_app_became_inactive")
+            flushIfEnabled()
+        }
+    }
+
+    private func flushIfEnabled() {
+        if preferences.collectionEnabled, projectToken != nil {
+            transport.flush()
         }
     }
 
     private func captureStudioEvent(_ name: String) {
         guard projectToken != nil, preferences.collectionEnabled,
-              let event = try? AnalyticsEvent(
-                  studioEvent: name,
-                  properties: runtimeProperties()
-              )
+              (try? AnalyticsValidation.validateEventName(
+                  name,
+                  allowsStudioPrefix: true
+              )) != nil
         else {
             return
         }
-        transport.capture(
-            event: event.name,
-            properties: event.properties.mapValues(\.transportValue)
-        )
+        transport.capture(event: name, properties: runtimeProperties())
     }
 }

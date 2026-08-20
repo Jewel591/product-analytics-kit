@@ -15,13 +15,16 @@ public protocol ProductAnalyticsTransport: AnyObject {
 @MainActor
 public protocol ProductAnalyticsPreferenceStoring: AnyObject {
     var collectionEnabled: Bool { get set }
+    var isCollectionPreferenceInitialized: Bool { get }
     var hasPendingIdentityReset: Bool { get set }
+    var authenticatedUserID: UUID? { get set }
 }
 
 @_spi(Testing)
 public enum ProductAnalyticsLifecycleEvent: Sendable, Equatable {
     case becameActive
     case enteredBackground
+    case becameInactive
 }
 
 @_spi(Testing)

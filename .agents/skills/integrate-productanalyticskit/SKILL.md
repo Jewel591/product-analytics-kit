@@ -76,19 +76,16 @@ push switches. Do not import `PostHog` in the application target.
 
 ## Preserve an existing privacy choice
 
-ProductAnalyticsKit owns the stable new preference and defaults first-party
-analytics to enabled. Before the first `start`, seed it once from any legacy
-preference, then mark the migration complete in the host:
+ProductAnalyticsKit owns the stable preference and defaults first-party
+analytics to enabled. Before the first `start`, let the Kit seed it from any
+legacy value. The Kit owns the one-time marker; do not add another host marker:
 
 ```swift
 let defaults = UserDefaults.standard
-if !defaults.bool(forKey: "analytics.choice.migrated") {
-    if defaults.object(forKey: "legacy.analytics.enabled") != nil {
-        ProductAnalyticsClient.shared.setCollectionEnabled(
-            defaults.bool(forKey: "legacy.analytics.enabled")
-        )
-    }
-    defaults.set(true, forKey: "analytics.choice.migrated")
+if defaults.object(forKey: "legacy.analytics.enabled") != nil {
+    ProductAnalyticsClient.shared.seedCollectionPreferenceIfUnset(
+        legacyValue: defaults.bool(forKey: "legacy.analytics.enabled")
+    )
 }
 ```
 
@@ -109,13 +106,15 @@ properties:
 
 ```swift
 enum ProductEvent {
-    static func reminderCreated(source: Source, repeating: Bool) throws
-        -> AnalyticsEvent
+    enum Source: String, Sendable { case toolbar, shortcut }
+
+    static func reminderCreated(source: Source, repeating: Bool)
+        -> AnalyticsCaptureOutcome
     {
-        try AnalyticsEvent(
+        ProductAnalyticsClient.shared.track(
             name: "reminder_created",
             properties: [
-                "source": .string(source.rawValue),
+                "source": .dimension(AnalyticsDimension(source)),
                 "is_repeating": .bool(repeating),
             ]
         )
@@ -128,8 +127,10 @@ activation, adoption, retention, or conversion. Do not mirror every button tap.
 Do not dynamically build names from IDs, localized strings, screen titles, or
 user input.
 
-Properties may contain only bounded strings/enums, booleans, integers, finite
-doubles, counts, and coarse buckets. Never send:
+Properties may contain only dimensions originating from bounded `String` raw-
+value enums, booleans, integers, finite doubles, counts, and coarse buckets.
+The capture API never throws or blocks product behavior; invalid schemas return
+`.dropped(.invalidSchema)`. Never send:
 
 - email, phone, name, username, address, account/device ID, IDFA, or IDFV;
 - record UUIDs, distinct IDs, URLs, filenames, notification copy, search text,
@@ -146,24 +147,25 @@ pass; redesign the event as a bounded category or aggregate.
 After a stable authenticated session is established:
 
 ```swift
-ProductAnalyticsClient.shared.identify(userID: account.id.uuidString)
+ProductAnalyticsClient.shared.setAuthenticatedUserID(account.id) // UUID
 ```
 
 Use an internal stable account ID only. Never use email, phone, display name, or
 a shared literal such as `"user"` or `"anonymous"`. Anonymous users need no
 identify call; PostHog supplies an anonymous ID.
 
-On logout or account deletion, call `reset()` before the next account can emit
-an event:
+On logout or account deletion, report `nil` before or as session truth changes:
 
 ```swift
-ProductAnalyticsClient.shared.reset()
+ProductAnalyticsClient.shared.setAuthenticatedUserID(nil)
 await auth.signOut()
 ```
 
-Call reset even while collection is disabled. The Kit persists a pending reset
-and applies it before later collection resumes. On account switching, reset the
-old account, complete the switch, then identify the new stable ID.
+Report identity even while collection is disabled. The Kit persists a pending
+reset and applies it before later collection resumes. On account switching,
+pass the new UUID; the Kit resets the old identity before identifying the new
+one. Do not call PostHog identify/reset directly or keep a host-side previous-
+account marker.
 
 ## Keep adjacent systems outside
 
@@ -199,9 +201,10 @@ Do not claim that a privacy manifest replaces App Store Connect disclosures.
 
 ## Migrate atomically
 
-1. Add ProductAnalyticsKit and seed the old privacy choice.
+1. Add ProductAnalyticsKit and seed the old privacy choice through
+   `seedCollectionPreferenceIfUnset(legacyValue:)`.
 2. Create the host event catalog and map only decision-useful legacy events.
-3. Wire composition-root start, session identify, logout reset, and privacy UI.
+3. Wire composition-root start, session identity truth, logout `nil`, and privacy UI.
 4. Replace direct capture calls.
 5. Remove direct analytics SDK dependencies, imports, lifecycle observers,
    screen tracking, and custom transport/storage code in the same change.

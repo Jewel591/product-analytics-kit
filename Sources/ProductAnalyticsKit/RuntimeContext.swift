@@ -1,18 +1,16 @@
 import Foundation
 
 enum RuntimeContext {
-    static func properties(bundle: Bundle = .main) -> [String: AnalyticsPropertyValue] {
+    static func properties(bundle: Bundle = .main) -> [String: Any] {
         [
-            "app_version": .string(
+            "app_version":
                 bundle.object(forInfoDictionaryKey: "CFBundleShortVersionString")
-                    as? String ?? "unknown"
-            ),
-            "app_build": .string(
+                    as? String ?? "unknown",
+            "app_build":
                 bundle.object(forInfoDictionaryKey: "CFBundleVersion")
-                    as? String ?? "unknown"
-            ),
-            "os_name": .string(osName),
-            "os_version": .string(ProcessInfo.processInfo.operatingSystemVersionString),
+                    as? String ?? "unknown",
+            "os_name": osName,
+            "os_version": ProcessInfo.processInfo.operatingSystemVersionString,
         ]
     }
 

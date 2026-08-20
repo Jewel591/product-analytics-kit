@@ -55,12 +55,23 @@ final class FakeAnalyticsTransport: ProductAnalyticsTransport {
 
 @MainActor
 final class FakeAnalyticsPreferences: ProductAnalyticsPreferenceStoring {
-    var collectionEnabled: Bool
+    var collectionEnabled: Bool {
+        didSet { isCollectionPreferenceInitialized = true }
+    }
+    var isCollectionPreferenceInitialized: Bool
     var hasPendingIdentityReset: Bool
+    var authenticatedUserID: UUID?
 
-    init(collectionEnabled: Bool = true, hasPendingIdentityReset: Bool = false) {
+    init(
+        collectionEnabled: Bool = true,
+        isCollectionPreferenceInitialized: Bool = true,
+        hasPendingIdentityReset: Bool = false,
+        authenticatedUserID: UUID? = nil
+    ) {
         self.collectionEnabled = collectionEnabled
+        self.isCollectionPreferenceInitialized = isCollectionPreferenceInitialized
         self.hasPendingIdentityReset = hasPendingIdentityReset
+        self.authenticatedUserID = authenticatedUserID
     }
 }
 
@@ -90,10 +101,10 @@ func makeClient(
         lifecycleSource: lifecycle,
         runtimeProperties: {
             [
-                "app_version": .string("1.2.3"),
-                "app_build": .string("45"),
-                "os_name": .string("ios"),
-                "os_version": .string("27.0"),
+                "app_version": "1.2.3",
+                "app_build": "45",
+                "os_name": "ios",
+                "os_version": "27.0",
             ]
         }
     )

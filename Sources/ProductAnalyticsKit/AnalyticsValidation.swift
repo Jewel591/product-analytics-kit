@@ -1,19 +1,17 @@
 import Foundation
 
-public enum AnalyticsValidationError: Error, Sendable, Equatable {
+enum AnalyticsValidationError: Error, Sendable, Equatable {
     case invalidEventName(String)
     case reservedEventName(String)
     case tooManyProperties(Int)
     case invalidPropertyKey(String)
     case sensitivePropertyKey(String)
     case invalidPropertyValue(String)
-    case sensitivePropertyValue(String)
-    case invalidUserID
 }
 
 enum AnalyticsValidation {
     static let maximumPropertyCount = 24
-    static let maximumStringLength = 128
+    static let maximumDimensionLength = 48
 
     private static let forbiddenExactKeys: Set<String> = [
         "account_id",
@@ -71,17 +69,6 @@ enum AnalyticsValidation {
         }
     }
 
-    static func validateUserID(_ userID: String) throws {
-        guard !userID.isEmpty,
-              userID.count <= maximumStringLength,
-              userID == userID.trimmingCharacters(in: .whitespacesAndNewlines),
-              !userID.unicodeScalars.contains(where: CharacterSet.controlCharacters.contains),
-              !looksSensitive(userID)
-        else {
-            throw AnalyticsValidationError.invalidUserID
-        }
-    }
-
     static func validateProjectToken(_ token: String) -> Bool {
         guard token.hasPrefix("phc_"), token.count >= 12, token.count <= 256 else {
             return false
@@ -93,15 +80,12 @@ enum AnalyticsValidation {
 
     private static func validate(_ value: AnalyticsPropertyValue, key: String) throws {
         switch value {
-        case let .string(string):
-            guard !string.isEmpty,
-                  string.count <= maximumStringLength,
-                  !string.unicodeScalars.contains(where: CharacterSet.newlines.contains)
-            else {
+        case let .dimension(dimension):
+            guard isSnakeCaseIdentifier(
+                dimension.rawValue,
+                maximumLength: maximumDimensionLength
+            ) else {
                 throw AnalyticsValidationError.invalidPropertyValue(key)
-            }
-            guard !looksSensitive(string) else {
-                throw AnalyticsValidationError.sensitivePropertyValue(key)
             }
         case let .double(number):
             guard number.isFinite else {
@@ -137,25 +121,4 @@ enum AnalyticsValidation {
         return !previousWasUnderscore
     }
 
-    private static func looksSensitive(_ value: String) -> Bool {
-        let lowercase = value.lowercased()
-        if lowercase.hasPrefix("http://") || lowercase.hasPrefix("https://")
-            || lowercase.hasPrefix("bearer ") || lowercase.hasPrefix("phc_")
-            || lowercase.hasPrefix("sk_") {
-            return true
-        }
-
-        if value.range(
-            of: #"[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}"#,
-            options: [.regularExpression, .caseInsensitive]
-        ) != nil {
-            return true
-        }
-
-        let jwtSegments = value.split(separator: ".", omittingEmptySubsequences: false)
-        if jwtSegments.count == 3, value.hasPrefix("eyJ") {
-            return true
-        }
-        return false
-    }
 }

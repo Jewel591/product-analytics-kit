@@ -7,6 +7,8 @@ final class UserDefaultsAnalyticsPreferenceStore: ProductAnalyticsPreferenceStor
             "com.jewel591.ProductAnalyticsKit.collectionEnabled.v1"
         static let pendingIdentityReset =
             "com.jewel591.ProductAnalyticsKit.pendingIdentityReset.v1"
+        static let authenticatedUserID =
+            "com.jewel591.ProductAnalyticsKit.authenticatedUserID.v1"
     }
 
     private let defaults: UserDefaults
@@ -25,8 +27,24 @@ final class UserDefaultsAnalyticsPreferenceStore: ProductAnalyticsPreferenceStor
         set { defaults.set(newValue, forKey: Key.collectionEnabled) }
     }
 
+    var isCollectionPreferenceInitialized: Bool {
+        defaults.object(forKey: Key.collectionEnabled) != nil
+    }
+
     var hasPendingIdentityReset: Bool {
         get { defaults.bool(forKey: Key.pendingIdentityReset) }
         set { defaults.set(newValue, forKey: Key.pendingIdentityReset) }
+    }
+
+    var authenticatedUserID: UUID? {
+        get {
+            guard let value = defaults.string(forKey: Key.authenticatedUserID) else {
+                return nil
+            }
+            return UUID(uuidString: value)
+        }
+        set {
+            defaults.set(newValue?.uuidString, forKey: Key.authenticatedUserID)
+        }
     }
 }

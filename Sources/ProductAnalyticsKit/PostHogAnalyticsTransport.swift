@@ -1,47 +1,45 @@
 import Foundation
 import PostHog
 
-@_spi(Testing)
-public struct PostHogPolicySnapshot: Sendable, Equatable {
-    public let host: String
-    public let lifecycleAutocapture: Bool
-    public let screenAutocapture: Bool
-    public let swizzling: Bool
-    public let featureFlagPreloading: Bool
-    public let featureFlagEvents: Bool
-    public let defaultPersonProperties: Bool
-    public let sessionReplay: Bool
-    public let surveys: Bool
-    public let errorAutocapture: Bool
-    public let pushSubscriptionAutocapture: Bool
-    public let pushOpenAutocapture: Bool
+@MainActor
+protocol PostHogRuntime: AnyObject {
+    func setup(_ configuration: PostHogConfig)
+    func capture(_ event: String, properties: [String: Any])
+    func identify(_ userID: String)
+    func reset()
+    func optIn()
+    func optOut()
+    func flush()
+}
 
-    public init(
-        host: String,
-        lifecycleAutocapture: Bool,
-        screenAutocapture: Bool,
-        swizzling: Bool,
-        featureFlagPreloading: Bool,
-        featureFlagEvents: Bool,
-        defaultPersonProperties: Bool,
-        sessionReplay: Bool,
-        surveys: Bool,
-        errorAutocapture: Bool,
-        pushSubscriptionAutocapture: Bool,
-        pushOpenAutocapture: Bool
-    ) {
-        self.host = host
-        self.lifecycleAutocapture = lifecycleAutocapture
-        self.screenAutocapture = screenAutocapture
-        self.swizzling = swizzling
-        self.featureFlagPreloading = featureFlagPreloading
-        self.featureFlagEvents = featureFlagEvents
-        self.defaultPersonProperties = defaultPersonProperties
-        self.sessionReplay = sessionReplay
-        self.surveys = surveys
-        self.errorAutocapture = errorAutocapture
-        self.pushSubscriptionAutocapture = pushSubscriptionAutocapture
-        self.pushOpenAutocapture = pushOpenAutocapture
+@MainActor
+private final class SharedPostHogRuntime: PostHogRuntime {
+    func setup(_ configuration: PostHogConfig) {
+        PostHogSDK.shared.setup(configuration)
+    }
+
+    func capture(_ event: String, properties: [String: Any]) {
+        PostHogSDK.shared.capture(event, properties: properties)
+    }
+
+    func identify(_ userID: String) {
+        PostHogSDK.shared.identify(userID)
+    }
+
+    func reset() {
+        PostHogSDK.shared.reset()
+    }
+
+    func optIn() {
+        PostHogSDK.shared.optIn()
+    }
+
+    func optOut() {
+        PostHogSDK.shared.optOut()
+    }
+
+    func flush() {
+        PostHogSDK.shared.flush()
     }
 }
 
@@ -49,23 +47,17 @@ public struct PostHogPolicySnapshot: Sendable, Equatable {
 final class PostHogAnalyticsTransport: ProductAnalyticsTransport {
     static let host = "https://us.i.posthog.com"
 
-    static let policySnapshot = PostHogPolicySnapshot(
-        host: host,
-        lifecycleAutocapture: false,
-        screenAutocapture: false,
-        swizzling: false,
-        featureFlagPreloading: false,
-        featureFlagEvents: false,
-        defaultPersonProperties: false,
-        sessionReplay: false,
-        surveys: false,
-        errorAutocapture: false,
-        pushSubscriptionAutocapture: false,
-        pushOpenAutocapture: false
-    )
+    private let runtime: any PostHogRuntime
 
-    func start(projectToken: String, collectionEnabled: Bool) {
-        let config = PostHogConfig(projectToken: projectToken, host: Self.host)
+    init(runtime: any PostHogRuntime = SharedPostHogRuntime()) {
+        self.runtime = runtime
+    }
+
+    static func makeConfiguration(
+        projectToken: String,
+        collectionEnabled: Bool
+    ) -> PostHogConfig {
+        let config = PostHogConfig(projectToken: projectToken, host: host)
         config.captureApplicationLifecycleEvents = false
         config.captureScreenViews = false
         config.enableSwizzling = false
@@ -82,6 +74,7 @@ final class PostHogAnalyticsTransport: ProductAnalyticsTransport {
 
         #if os(iOS) || targetEnvironment(macCatalyst)
         config.captureElementInteractions = false
+        config.rageClickConfig.enabled = false
         config.sessionReplay = false
         config.surveys = false
         #endif
@@ -91,30 +84,55 @@ final class PostHogAnalyticsTransport: ProductAnalyticsTransport {
         config.capturePushNotificationOpened = false
         #endif
 
-        PostHogSDK.shared.setup(config)
+        config.setBeforeSend { event in
+            allowsProviderEventName(event.event) ? event : nil
+        }
+        config.logs.setBeforeSend { _ in nil }
+        return config
+    }
+
+    static func allowsProviderEventName(_ name: String) -> Bool {
+        if name == "$identify" || name == "$set" {
+            return true
+        }
+        return (try? AnalyticsValidation.validateEventName(
+            name,
+            allowsStudioPrefix: true
+        )) != nil
+    }
+
+    func start(projectToken: String, collectionEnabled: Bool) {
+        runtime.setup(Self.makeConfiguration(
+            projectToken: projectToken,
+            collectionEnabled: collectionEnabled
+        ))
+
+        // PostHog restores its own persisted opt-out after setup. The Kit's
+        // preference is the only portfolio truth, so reconcile unconditionally.
+        setCollectionEnabled(collectionEnabled)
     }
 
     func capture(event: String, properties: [String: Any]) {
-        PostHogSDK.shared.capture(event, properties: properties)
+        runtime.capture(event, properties: properties)
     }
 
     func identify(userID: String) {
-        PostHogSDK.shared.identify(userID)
+        runtime.identify(userID)
     }
 
     func reset() {
-        PostHogSDK.shared.reset()
+        runtime.reset()
     }
 
     func setCollectionEnabled(_ enabled: Bool) {
         if enabled {
-            PostHogSDK.shared.optIn()
+            runtime.optIn()
         } else {
-            PostHogSDK.shared.optOut()
+            runtime.optOut()
         }
     }
 
     func flush() {
-        PostHogSDK.shared.flush()
+        runtime.flush()
     }
 }

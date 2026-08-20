@@ -31,7 +31,8 @@ symlink to this file.
 ## API boundary
 
 - Production API remains one shared `ProductAnalyticsClient` with `start`,
-  `track`, `identify`, `reset`, and `setCollectionEnabled`.
+  nonthrowing `track`, `setAuthenticatedUserID(UUID?)`, privacy-choice seeding,
+  and `setCollectionEnabled`. Identity reset/switch ordering stays Kit-owned.
 - PostHog types must not appear in public declarations.
 - Testing injection exists only through the `Testing` SPI. Do not make it a
   second production construction path.

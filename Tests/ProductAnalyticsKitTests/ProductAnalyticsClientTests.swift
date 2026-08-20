@@ -1,8 +1,14 @@
+import Foundation
 import Testing
 @_spi(Testing) @testable import ProductAnalyticsKit
 
 @MainActor
 struct ProductAnalyticsClientTests {
+    private enum Dimension: String, Sendable {
+        case toolbar
+        case privateSearchText = "private search text"
+    }
+
     @Test func startIsIdempotentAndCapturesOneLaunch() {
         let transport = FakeAnalyticsTransport()
         let lifecycle = FakeLifecycleSource()
@@ -30,63 +36,80 @@ struct ProductAnalyticsClientTests {
         #expect(transport.starts.count == 1)
     }
 
-    @Test func productEventsNeverBlockAndRespectCollectionState() throws {
+    @Test func productEventsNeverThrowAndRespectCollectionState() {
         let transport = FakeAnalyticsTransport()
         let preferences = FakeAnalyticsPreferences(collectionEnabled: false)
         let client = makeClient(transport: transport, preferences: preferences)
-        let event = try AnalyticsEvent(name: "reminder_created")
 
-        #expect(client.track(event) == .dropped(.notStarted))
+        #expect(client.track(name: "reminder_created") == .dropped(.notStarted))
         #expect(client.start(projectToken: validProjectToken) == .started)
-        #expect(client.track(event) == .dropped(.collectionDisabled))
+        #expect(client.track(name: "reminder_created") == .dropped(.collectionDisabled))
         #expect(transport.captures.isEmpty)
 
         client.setCollectionEnabled(true)
-        #expect(client.track(event) == .captured)
+        #expect(client.track(
+            name: "reminder_created",
+            properties: ["source": .dimension(AnalyticsDimension(Dimension.toolbar))]
+        ) == .captured)
         #expect(transport.captures.map(\.event) == ["reminder_created"])
+    }
+
+    @Test func invalidSchemaIsDroppedWithoutConstructingAThrowingEvent() {
+        let transport = FakeAnalyticsTransport()
+        let client = makeClient(transport: transport)
+        client.start(projectToken: validProjectToken)
+
+        #expect(client.track(
+            name: "Reminder Created",
+            properties: ["query": .dimension(AnalyticsDimension(Dimension.privateSearchText))]
+        ) == .dropped(.invalidSchema))
+        #expect(transport.captures.map(\.event) == ["studio_app_launched"])
     }
 
     @Test func identityCanArriveBeforeStartup() {
         let transport = FakeAnalyticsTransport()
         let client = makeClient(transport: transport)
 
-        #expect(client.identify(userID: "account-42") == .deferred)
+        #expect(client.setAuthenticatedUserID(accountA) == .deferred)
         #expect(client.start(projectToken: validProjectToken) == .started)
-        #expect(transport.identifiedUserIDs == ["account-42"])
+        #expect(transport.identifiedUserIDs == [accountA.uuidString])
     }
 
-    @Test(arguments: [
-        "",
-        " person ",
-        "person@example.com",
-        "https://example.com/person",
-    ])
-    func rejectsUnsafeIdentity(_ userID: String) {
+    @Test func accountSwitchAlwaysResetsBeforeIdentifyingTheNewUUID() {
         let transport = FakeAnalyticsTransport()
-        let client = makeClient(transport: transport)
+        let preferences = FakeAnalyticsPreferences(authenticatedUserID: accountA)
+        let client = makeClient(transport: transport, preferences: preferences)
+        client.start(projectToken: validProjectToken)
+        _ = client.setAuthenticatedUserID(accountA)
 
-        #expect(client.identify(userID: userID) == .rejected)
-        #expect(transport.identifiedUserIDs.isEmpty)
+        #expect(client.setAuthenticatedUserID(accountB) == .applied)
+        #expect(transport.actions.suffix(2) == [
+            "reset",
+            "identify:\(accountB.uuidString)",
+        ])
+        #expect(preferences.authenticatedUserID == accountB)
     }
 
     @Test func logoutWhileOptedOutResetsBeforeFutureIdentification() {
         let transport = FakeAnalyticsTransport()
-        let preferences = FakeAnalyticsPreferences(collectionEnabled: false)
+        let preferences = FakeAnalyticsPreferences(
+            collectionEnabled: false,
+            authenticatedUserID: accountA
+        )
         let client = makeClient(transport: transport, preferences: preferences)
 
         client.start(projectToken: validProjectToken)
-        #expect(client.identify(userID: "next-account") == .deferred)
-        client.reset()
+        #expect(client.setAuthenticatedUserID(nil) == .deferred)
         #expect(preferences.hasPendingIdentityReset)
         #expect(transport.resetCount == 0)
 
-        #expect(client.identify(userID: "next-account") == .deferred)
+        #expect(client.setAuthenticatedUserID(accountB) == .deferred)
         client.setCollectionEnabled(true)
 
         #expect(transport.actions.suffix(3) == [
             "enabled:true",
             "reset",
-            "identify:next-account",
+            "identify:\(accountB.uuidString)",
         ])
         #expect(!preferences.hasPendingIdentityReset)
     }
@@ -110,7 +133,20 @@ struct ProductAnalyticsClientTests {
         #expect(!preferences.hasPendingIdentityReset)
     }
 
-    @Test func lifecycleIsExplicitAndBackgroundFlushes() {
+    @Test func legacyPreferenceSeedsOnceWithoutAHostMigrationMarker() {
+        let preferences = FakeAnalyticsPreferences(
+            collectionEnabled: true,
+            isCollectionPreferenceInitialized: false
+        )
+        let client = makeClient(preferences: preferences)
+
+        #expect(client.seedCollectionPreferenceIfUnset(legacyValue: false))
+        #expect(!preferences.collectionEnabled)
+        #expect(!client.seedCollectionPreferenceIfUnset(legacyValue: true))
+        #expect(!preferences.collectionEnabled)
+    }
+
+    @Test func lifecycleUsesSeparateBackgroundAndInactiveSemantics() {
         let transport = FakeAnalyticsTransport()
         let lifecycle = FakeLifecycleSource()
         let client = makeClient(transport: transport, lifecycle: lifecycle)
@@ -118,12 +154,17 @@ struct ProductAnalyticsClientTests {
 
         lifecycle.send(.becameActive)
         lifecycle.send(.enteredBackground)
+        lifecycle.send(.becameInactive)
 
         #expect(transport.captures.map(\.event) == [
             "studio_app_launched",
             "studio_app_became_active",
             "studio_app_entered_background",
+            "studio_app_became_inactive",
         ])
-        #expect(transport.flushCount == 1)
+        #expect(transport.flushCount == 2)
     }
 }
+
+private let accountA = UUID(uuidString: "AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA")!
+private let accountB = UUID(uuidString: "BBBBBBBB-BBBB-BBBB-BBBB-BBBBBBBBBBBB")!

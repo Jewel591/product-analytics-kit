@@ -37,7 +37,7 @@ final class SystemLifecycleSource: NSObject, ProductAnalyticsLifecycleSourcing {
         )
         NotificationCenter.default.addObserver(
             self,
-            selector: #selector(didEnterBackground),
+            selector: #selector(didBecomeInactive),
             name: NSApplication.didResignActiveNotification,
             object: nil
         )
@@ -50,6 +50,10 @@ final class SystemLifecycleSource: NSObject, ProductAnalyticsLifecycleSourcing {
 
     @objc private func didEnterBackground() {
         eventHandler?(.enteredBackground)
+    }
+
+    @objc private func didBecomeInactive() {
+        eventHandler?(.becameInactive)
     }
 
     deinit {

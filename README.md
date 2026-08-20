@@ -35,8 +35,9 @@ protocol for production use.
   are rejected before they reach PostHog.
 - Collection is enabled by default for first-party analytics and can be changed
   through the single persistent user privacy choice owned by the Kit.
-- `identify` accepts only a stable internal account identifier. It never accepts
-  email, phone number, display name, or person properties. Logout calls `reset`.
+- Identity accepts only a `UUID` stable internal account identifier. The Kit
+  owns account switches, logout reset, and persisted pending-reset recovery; it
+  never accepts email, phone number, display name, or person properties.
 - Analytics never blocks product behavior. Invalid or unavailable analytics are
   reported as local outcomes and dropped fail-safe.
 
@@ -60,6 +61,7 @@ The Kit automatically records these fixed lifecycle events after startup:
 - `studio_app_launched`
 - `studio_app_became_active`
 - `studio_app_entered_background`
+- `studio_app_became_inactive` (macOS only; distinct from background)
 
 It does not automatically inspect screen names, controls, view hierarchies, or
 user-entered text.
@@ -67,19 +69,22 @@ user-entered text.
 ## Capture a product event
 
 Product event names and their bounded, non-sensitive properties stay in the
-host app because they express that product's funnel:
+host app because they express that product's funnel. String dimensions must
+come from a host-owned enum; arbitrary strings are not representable:
 
 ```swift
-let event = try AnalyticsEvent(
+enum EventSource: String, Sendable {
+    case toolbar
+}
+
+let outcome = ProductAnalyticsClient.shared.track(
     name: "reminder_created",
     properties: [
-        "source": .string("toolbar"),
+        "source": .dimension(AnalyticsDimension(EventSource.toolbar)),
         "has_repeat_rule": .bool(true),
-        "reminder_count_bucket": .string("2_5"),
+        "reminder_count": .int(2),
     ]
 )
-
-let outcome = ProductAnalyticsClient.shared.track(event)
 ```
 
 Use bounded enums, booleans, counts, and coarse buckets. Do not send record IDs,
@@ -91,15 +96,14 @@ not ingest receipts or implement revenue attribution.
 ## Identity and logout
 
 ```swift
-ProductAnalyticsClient.shared.identify(userID: account.id.uuidString)
-
-// Before or as part of logout:
-ProductAnalyticsClient.shared.reset()
+ProductAnalyticsClient.shared.setAuthenticatedUserID(account.id) // UUID
+ProductAnalyticsClient.shared.setAuthenticatedUserID(nil)        // logout
 ```
 
-`reset` is required even while collection is disabled. The Kit remembers a
-pending reset and applies it before any future event if collection is enabled
-again, preventing the next account from inheriting the previous identity.
+The Kit compares the persisted previous account, resets before an account
+switch, and remembers logout while collection is disabled. A pending reset is
+applied before lifecycle or product events can resume, preventing identity
+inheritance across launches and accounts.
 
 ## User privacy choice
 

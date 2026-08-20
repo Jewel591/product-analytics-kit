@@ -1,21 +1,29 @@
-import Foundation
 import Testing
 @testable import ProductAnalyticsKit
 
 struct AnalyticsEventTests {
-    @Test func acceptsBoundedSchemaValues() throws {
-        let event = try AnalyticsEvent(
-            name: "reminder_created",
-            properties: [
-                "source": .string("toolbar"),
-                "count": .int(2),
-                "latency_bucket": .double(0.5),
-                "is_repeating": .bool(true),
-            ]
-        )
+    private enum Dimension: String, Sendable {
+        case toolbar
+        case bounded
+        case freeForm = "how to hide a purchase"
+        case uuid = "550e8400-e29b-41d4-a716-446655440000"
+        case email = "person@example.com"
+        case filename = "report.pdf"
+        case nonASCII = "提醒内容"
+        case oversized = "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+    }
 
-        #expect(event.name == "reminder_created")
-        #expect(event.properties.count == 4)
+    @Test func acceptsBoundedSchemaValues() throws {
+        try AnalyticsValidation.validateEventName(
+            "reminder_created",
+            allowsStudioPrefix: false
+        )
+        try AnalyticsValidation.validateProperties([
+            "source": .dimension(AnalyticsDimension(Dimension.toolbar)),
+            "count": .int(2),
+            "latency_bucket": .double(0.5),
+            "is_repeating": .bool(true),
+        ])
     }
 
     @Test(arguments: [
@@ -29,13 +37,19 @@ struct AnalyticsEventTests {
     ])
     func rejectsUnstableEventNames(_ name: String) {
         #expect(throws: AnalyticsValidationError.self) {
-            try AnalyticsEvent(name: name)
+            try AnalyticsValidation.validateEventName(
+                name,
+                allowsStudioPrefix: false
+            )
         }
     }
 
     @Test func reservesStudioLifecycleNamespace() {
         #expect(throws: AnalyticsValidationError.reservedEventName("studio_custom")) {
-            try AnalyticsEvent(name: "studio_custom")
+            try AnalyticsValidation.validateEventName(
+                "studio_custom",
+                allowsStudioPrefix: false
+            )
         }
     }
 
@@ -49,41 +63,37 @@ struct AnalyticsEventTests {
     ])
     func rejectsSensitivePropertyKeys(_ key: String) {
         #expect(throws: AnalyticsValidationError.self) {
-            try AnalyticsEvent(
-                name: "account_signed_in",
-                properties: [key: .string("bounded")]
-            )
+            try AnalyticsValidation.validateProperties([
+                key: .dimension(AnalyticsDimension(Dimension.bounded))
+            ])
         }
     }
 
     @Test(arguments: [
-        "person@example.com",
-        "https://example.com/private/path",
-        "Bearer credential",
-        "phc_not_a_property",
-        "eyJheader.payload.signature",
+        Dimension.freeForm,
+        Dimension.uuid,
+        Dimension.email,
+        Dimension.filename,
+        Dimension.nonASCII,
     ])
-    func rejectsSensitiveStringValues(_ value: String) {
+    private func rejectsFreeFormDimensions(_ value: Dimension) {
         #expect(throws: AnalyticsValidationError.self) {
-            try AnalyticsEvent(
-                name: "account_signed_in",
-                properties: ["source": .string(value)]
-            )
+            try AnalyticsValidation.validateProperties([
+                "source": .dimension(AnalyticsDimension(value))
+            ])
         }
     }
 
     @Test func rejectsOversizedAndNonFiniteValues() {
         #expect(throws: AnalyticsValidationError.self) {
-            try AnalyticsEvent(
-                name: "search_completed",
-                properties: ["query": .string(String(repeating: "x", count: 129))]
-            )
+            try AnalyticsValidation.validateProperties([
+                "source": .dimension(AnalyticsDimension(Dimension.oversized))
+            ])
         }
         #expect(throws: AnalyticsValidationError.self) {
-            try AnalyticsEvent(
-                name: "search_completed",
-                properties: ["duration": .double(.infinity)]
-            )
+            try AnalyticsValidation.validateProperties([
+                "duration": .double(.infinity)
+            ])
         }
     }
 
@@ -92,7 +102,7 @@ struct AnalyticsEventTests {
             ("property_\($0)", AnalyticsPropertyValue.int($0))
         })
         #expect(throws: AnalyticsValidationError.tooManyProperties(25)) {
-            try AnalyticsEvent(name: "bulk_completed", properties: properties)
+            try AnalyticsValidation.validateProperties(properties)
         }
     }
 }
