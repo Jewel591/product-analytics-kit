@@ -55,12 +55,17 @@ final class FakeAnalyticsTransport: ProductAnalyticsTransport {
 
 @MainActor
 final class FakeAnalyticsPreferences: ProductAnalyticsPreferenceStoring {
+    var writes: [String] = []
     var collectionEnabled: Bool {
         didSet { isCollectionPreferenceInitialized = true }
     }
     var isCollectionPreferenceInitialized: Bool
-    var hasPendingIdentityReset: Bool
-    var authenticatedUserID: UUID?
+    var hasPendingIdentityReset: Bool {
+        didSet { writes.append("pending:\(hasPendingIdentityReset)") }
+    }
+    var authenticatedUserID: UUID? {
+        didSet { writes.append("identity:\(authenticatedUserID?.uuidString ?? "nil")") }
+    }
 
     init(
         collectionEnabled: Bool = true,

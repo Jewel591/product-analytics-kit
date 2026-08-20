@@ -111,6 +111,18 @@ struct ProductAnalyticsClientTests {
         #expect(preferences.authenticatedUserID == accountB)
     }
 
+    @Test func accountSwitchPersistsResetMarkerBeforeNewIdentity() {
+        let preferences = FakeAnalyticsPreferences(authenticatedUserID: accountA)
+        let client = makeClient(preferences: preferences)
+
+        _ = client.setAuthenticatedUserID(accountB)
+
+        #expect(preferences.writes.prefix(2) == [
+            "pending:true",
+            "identity:\(accountB.uuidString)",
+        ])
+    }
+
     @Test func logoutWhileOptedOutResetsBeforeFutureIdentification() {
         let transport = FakeAnalyticsTransport()
         let preferences = FakeAnalyticsPreferences(

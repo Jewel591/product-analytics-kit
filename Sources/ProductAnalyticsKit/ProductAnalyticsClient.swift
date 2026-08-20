@@ -110,10 +110,13 @@ public final class ProductAnalyticsClient {
 
         let previousUserID = preferences.authenticatedUserID
         let changed = previousUserID != userID
-        preferences.authenticatedUserID = userID
         if changed, previousUserID != nil {
+            // Persist the conservative reset marker first. A termination
+            // between these two writes may cause one extra reset, but can
+            // never let a new session inherit the previous provider identity.
             preferences.hasPendingIdentityReset = true
         }
+        preferences.authenticatedUserID = userID
 
         activateIfIdentityReported()
 
