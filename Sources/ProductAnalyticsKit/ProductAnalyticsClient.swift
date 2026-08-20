@@ -10,6 +10,7 @@ public final class ProductAnalyticsClient {
     private let runtimeProperties: @MainActor () -> [String: Any]
 
     private var projectToken: String?
+    private var transportStarted = false
     private var reportedUserID: UUID?
     private var hasReportedIdentity = false
     private var identifiedUserID: UUID?
@@ -65,22 +66,8 @@ public final class ProductAnalyticsClient {
                 : .rejected(.differentProjectToken)
         }
 
-        let shouldStartEnabled = preferences.collectionEnabled
-            && !preferences.hasPendingIdentityReset
-        transport.start(
-            projectToken: token,
-            collectionEnabled: shouldStartEnabled
-        )
         self.projectToken = token
-
-        reconcilePendingIdentityResetIfNeeded()
-        identifyReportedUserIfNeeded()
-
-        lifecycleSource.eventHandler = { [weak self] event in
-            self?.record(event)
-        }
-        lifecycleSource.start()
-        captureStudioEvent("studio_app_launched")
+        activateIfIdentityReported()
         return .started
     }
 
@@ -91,6 +78,7 @@ public final class ProductAnalyticsClient {
         properties: [String: AnalyticsPropertyValue] = [:]
     ) -> AnalyticsCaptureOutcome {
         guard projectToken != nil else { return .dropped(.notStarted) }
+        guard transportStarted else { return .dropped(.identityNotReported) }
         guard preferences.collectionEnabled else {
             return .dropped(.collectionDisabled)
         }
@@ -127,7 +115,9 @@ public final class ProductAnalyticsClient {
             preferences.hasPendingIdentityReset = true
         }
 
-        guard projectToken != nil, preferences.collectionEnabled else {
+        activateIfIdentityReported()
+
+        guard transportStarted, preferences.collectionEnabled else {
             return changed || identifiedUserID != userID ? .deferred : .unchanged
         }
 
@@ -147,34 +137,68 @@ public final class ProductAnalyticsClient {
         guard preferences.collectionEnabled != enabled else { return }
         preferences.collectionEnabled = enabled
         guard projectToken != nil else { return }
+        activateIfIdentityReported()
+        guard transportStarted else { return }
 
-        transport.setCollectionEnabled(enabled)
-        guard enabled else { return }
+        if !enabled {
+            transport.setCollectionEnabled(false)
+            return
+        }
 
+        // Reset while the provider remains opted out so its persisted queue
+        // cannot flush under the previous account identity.
         reconcilePendingIdentityResetIfNeeded()
+        transport.setCollectionEnabled(true)
         identifyReportedUserIfNeeded()
     }
 
     @discardableResult
     private func reconcilePendingIdentityResetIfNeeded() -> Bool {
         guard preferences.hasPendingIdentityReset,
-              projectToken != nil
+              transportStarted,
+              preferences.collectionEnabled
         else {
             return false
         }
 
-        // Startup deliberately remains opted out while a persisted identity
-        // reset is pending. Temporarily opt in so transports such as PostHog do
-        // not discard the reset operation, then restore the user's preference.
-        let shouldRestoreDisabled = !preferences.collectionEnabled
-        transport.setCollectionEnabled(true)
         transport.reset()
         identifiedUserID = nil
         preferences.hasPendingIdentityReset = false
-        if shouldRestoreDisabled {
-            transport.setCollectionEnabled(false)
-        }
         return true
+    }
+
+    /// Starts the provider only after the host has supplied current session
+    /// truth, including an explicit nil for an anonymous session. This keeps
+    /// launch and early product events off a persisted identity from a prior
+    /// process. A pending reset starts opted out until the old queue and
+    /// identity have been cleared.
+    private func activateIfIdentityReported() {
+        guard !transportStarted,
+              hasReportedIdentity,
+              let projectToken
+        else {
+            return
+        }
+
+        let startsEnabled = preferences.collectionEnabled
+            && !preferences.hasPendingIdentityReset
+        transport.start(
+            projectToken: projectToken,
+            collectionEnabled: startsEnabled
+        )
+        transportStarted = true
+
+        if preferences.collectionEnabled,
+           reconcilePendingIdentityResetIfNeeded() {
+            transport.setCollectionEnabled(true)
+        }
+        identifyReportedUserIfNeeded()
+
+        lifecycleSource.eventHandler = { [weak self] event in
+            self?.record(event)
+        }
+        lifecycleSource.start()
+        captureStudioEvent("studio_app_launched")
     }
 
     private func identifyReportedUserIfNeeded() {
@@ -204,13 +228,13 @@ public final class ProductAnalyticsClient {
     }
 
     private func flushIfEnabled() {
-        if preferences.collectionEnabled, projectToken != nil {
+        if preferences.collectionEnabled, transportStarted {
             transport.flush()
         }
     }
 
     private func captureStudioEvent(_ name: String) {
-        guard projectToken != nil, preferences.collectionEnabled,
+        guard transportStarted, preferences.collectionEnabled,
               (try? AnalyticsValidation.validateEventName(
                   name,
                   allowsStudioPrefix: true

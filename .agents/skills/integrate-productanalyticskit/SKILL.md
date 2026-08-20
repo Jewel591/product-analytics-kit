@@ -49,7 +49,7 @@ The app supplies one public PostHog project token. A `phc_...` client token is
 shipped in every app binary and may live in source; never put PostHog personal
 API keys or server secrets in the app.
 
-## Start once at the composition root
+## Report session truth, then start once
 
 ```swift
 import ProductAnalyticsKit
@@ -61,6 +61,10 @@ enum AnalyticsConfiguration {
 @main
 struct ExampleApp: App {
     init() {
+        // Use the synchronously restored account UUID, or nil when anonymous.
+        ProductAnalyticsClient.shared.setAuthenticatedUserID(
+            SessionStore.shared.restoredAccountID
+        )
         ProductAnalyticsKit.ProductAnalyticsClient.shared.start(
             projectToken: AnalyticsConfiguration.projectToken
         )
@@ -69,6 +73,11 @@ struct ExampleApp: App {
     var body: some Scene { /* ... */ }
 }
 ```
+
+If session restoration is asynchronous, `start` may run first, but analytics
+remains dormant until the restoration path calls `setAuthenticatedUserID` with
+either the UUID or an explicit `nil`. Do not infer anonymous state before auth
+restoration has reached an authoritative result.
 
 Keep one PostHog project per product. Do not expose host, queue sizes, retry,
 batching, swizzling, screen capture, replay, surveys, flags, error capture, or
@@ -144,10 +153,11 @@ pass; redesign the event as a bounded category or aggregate.
 
 ## Wire identity without leaking account data
 
-After a stable authenticated session is established:
+Whenever session restoration reaches an authoritative result, including an
+anonymous result:
 
 ```swift
-ProductAnalyticsClient.shared.setAuthenticatedUserID(account.id) // UUID
+ProductAnalyticsClient.shared.setAuthenticatedUserID(account?.id) // UUID or nil
 ```
 
 Use an internal stable account ID only. Never use email, phone, display name, or

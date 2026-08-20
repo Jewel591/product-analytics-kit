@@ -11,6 +11,7 @@ public enum AnalyticsStartOutcome: Sendable, Equatable {
 
 public enum AnalyticsDropReason: Sendable, Equatable {
     case notStarted
+    case identityNotReported
     case collectionDisabled
     case invalidSchema
 }

@@ -14,6 +14,7 @@ struct ProductAnalyticsClientTests {
         let lifecycle = FakeLifecycleSource()
         let client = makeClient(transport: transport, lifecycle: lifecycle)
 
+        _ = client.setAuthenticatedUserID(nil)
         #expect(client.start(projectToken: validProjectToken) == .started)
         #expect(client.start(projectToken: validProjectToken) == .alreadyStarted)
         #expect(transport.starts.count == 1)
@@ -28,6 +29,7 @@ struct ProductAnalyticsClientTests {
         let client = makeClient(transport: transport)
 
         #expect(client.start(projectToken: "replace-me") == .rejected(.invalidProjectToken))
+        _ = client.setAuthenticatedUserID(nil)
         #expect(client.start(projectToken: validProjectToken) == .started)
         #expect(
             client.start(projectToken: "phc_abcdef1234567890")
@@ -43,6 +45,8 @@ struct ProductAnalyticsClientTests {
 
         #expect(client.track(name: "reminder_created") == .dropped(.notStarted))
         #expect(client.start(projectToken: validProjectToken) == .started)
+        #expect(client.track(name: "reminder_created") == .dropped(.identityNotReported))
+        _ = client.setAuthenticatedUserID(nil)
         #expect(client.track(name: "reminder_created") == .dropped(.collectionDisabled))
         #expect(transport.captures.isEmpty)
 
@@ -57,6 +61,7 @@ struct ProductAnalyticsClientTests {
     @Test func invalidSchemaIsDroppedWithoutConstructingAThrowingEvent() {
         let transport = FakeAnalyticsTransport()
         let client = makeClient(transport: transport)
+        _ = client.setAuthenticatedUserID(nil)
         client.start(projectToken: validProjectToken)
 
         #expect(client.track(
@@ -75,12 +80,28 @@ struct ProductAnalyticsClientTests {
         #expect(transport.identifiedUserIDs == [accountA.uuidString])
     }
 
+    @Test func startupWaitsForAuthoritativeAnonymousSessionTruth() {
+        let transport = FakeAnalyticsTransport()
+        let lifecycle = FakeLifecycleSource()
+        let client = makeClient(transport: transport, lifecycle: lifecycle)
+
+        #expect(client.start(projectToken: validProjectToken) == .started)
+        #expect(transport.starts.isEmpty)
+        #expect(transport.captures.isEmpty)
+        #expect(lifecycle.startCount == 0)
+
+        #expect(client.setAuthenticatedUserID(nil) == .unchanged)
+        #expect(transport.starts.count == 1)
+        #expect(transport.captures.map(\.event) == ["studio_app_launched"])
+        #expect(lifecycle.startCount == 1)
+    }
+
     @Test func accountSwitchAlwaysResetsBeforeIdentifyingTheNewUUID() {
         let transport = FakeAnalyticsTransport()
         let preferences = FakeAnalyticsPreferences(authenticatedUserID: accountA)
         let client = makeClient(transport: transport, preferences: preferences)
-        client.start(projectToken: validProjectToken)
         _ = client.setAuthenticatedUserID(accountA)
+        client.start(projectToken: validProjectToken)
 
         #expect(client.setAuthenticatedUserID(accountB) == .applied)
         #expect(transport.actions.suffix(2) == [
@@ -98,6 +119,7 @@ struct ProductAnalyticsClientTests {
         )
         let client = makeClient(transport: transport, preferences: preferences)
 
+        _ = client.setAuthenticatedUserID(accountA)
         client.start(projectToken: validProjectToken)
         #expect(client.setAuthenticatedUserID(nil) == .deferred)
         #expect(preferences.hasPendingIdentityReset)
@@ -107,8 +129,8 @@ struct ProductAnalyticsClientTests {
         client.setCollectionEnabled(true)
 
         #expect(transport.actions.suffix(3) == [
-            "enabled:true",
             "reset",
+            "enabled:true",
             "identify:\(accountB.uuidString)",
         ])
         #expect(!preferences.hasPendingIdentityReset)
@@ -122,15 +144,31 @@ struct ProductAnalyticsClientTests {
         )
         let client = makeClient(transport: transport, preferences: preferences)
 
+        _ = client.setAuthenticatedUserID(nil)
         client.start(projectToken: validProjectToken)
 
         #expect(transport.actions.prefix(4) == [
             "start:false",
-            "enabled:true",
             "reset",
+            "enabled:true",
             "capture:studio_app_launched",
         ])
         #expect(!preferences.hasPendingIdentityReset)
+    }
+
+    @Test func optedOutStartupNeverTemporarilyEnablesProviderForPendingReset() {
+        let transport = FakeAnalyticsTransport()
+        let preferences = FakeAnalyticsPreferences(
+            collectionEnabled: false,
+            hasPendingIdentityReset: true
+        )
+        let client = makeClient(transport: transport, preferences: preferences)
+
+        _ = client.setAuthenticatedUserID(nil)
+        client.start(projectToken: validProjectToken)
+
+        #expect(transport.actions == ["start:false"])
+        #expect(preferences.hasPendingIdentityReset)
     }
 
     @Test func legacyPreferenceSeedsOnceWithoutAHostMigrationMarker() {
@@ -150,6 +188,7 @@ struct ProductAnalyticsClientTests {
         let transport = FakeAnalyticsTransport()
         let lifecycle = FakeLifecycleSource()
         let client = makeClient(transport: transport, lifecycle: lifecycle)
+        _ = client.setAuthenticatedUserID(nil)
         client.start(projectToken: validProjectToken)
 
         lifecycle.send(.becameActive)

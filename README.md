@@ -43,11 +43,13 @@ protocol for production use.
 
 ## Composition root
 
-Start the shared client once from the app composition root:
+After restoring the current session, report its identity truth (including an
+explicit `nil` for an anonymous session), then start the shared client once:
 
 ```swift
 import ProductAnalyticsKit
 
+ProductAnalyticsClient.shared.setAuthenticatedUserID(restoredAccount?.id)
 let outcome = ProductAnalyticsKit.ProductAnalyticsClient.shared.start(
     projectToken: AnalyticsConfiguration.postHogProjectToken
 )
@@ -55,6 +57,10 @@ let outcome = ProductAnalyticsKit.ProductAnalyticsClient.shared.start(
 
 Calling `start` again with the same token is harmless. A different token is
 rejected so one process cannot silently mix two PostHog projects.
+If startup runs before session restoration, the Kit defers provider startup,
+lifecycle events, and product events until `setAuthenticatedUserID` supplies
+current session truth. This prevents a persisted identity from a previous
+process receiving early events.
 
 The Kit automatically records these fixed lifecycle events after startup:
 
