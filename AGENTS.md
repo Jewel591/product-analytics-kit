@@ -1,5 +1,11 @@
 # ProductAnalyticsKit
 
+## 维护状态
+
+本项目已暂停。保留源码与历史，但不得新增消费端、发布新版本或要求现有 App
+迁入。Apple App 按现行产品分析政策直接接入官方 PostHog SDK。只有 Ivens
+明确决定恢复后才能重启本 Kit；官方 SDK 直连与 Kit 路径不得并行投递。
+
 This repository is the canonical implementation and integration contract for
 the studio's Apple product analytics package. `CLAUDE.md` is only a compatibility
 symlink to this file.
