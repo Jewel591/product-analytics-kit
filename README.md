@@ -1,5 +1,9 @@
 # ProductAnalyticsKit
 
+> **项目状态：暂停。** 保留源码与历史，但不再新增消费端或发布版本。Apple App
+> 现行路线为直接接入官方 PostHog SDK；不得让本 Kit 与官方 SDK 直连并行投递。
+> 恢复本项目须由 Ivens 明确决定。
+
 An opinionated Swift package for first-party product analytics across Ivens'
 Apple app portfolio. It fixes the portfolio on one safe PostHog integration,
 one event contract, one identity lifecycle, and one privacy policy instead of
