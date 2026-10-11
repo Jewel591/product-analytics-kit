@@ -7,7 +7,7 @@
 明确决定恢复后才能重启本 Kit；官方 SDK 直连与 Kit 路径不得并行投递。
 
 This repository is the canonical implementation and integration contract for
-the studio's Apple product analytics package. `CLAUDE.md` is only a compatibility
+the studio's Apple product analytics package. `AGENTS.md` is only a compatibility
 symlink to this file.
 
 ## Product position
